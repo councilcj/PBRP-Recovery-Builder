@@ -10,11 +10,11 @@ on:
       MANIFEST_BRANCH:
         description: 'MANIFEST_BRANCH'
         required: true
-        default: 'android-12.1' # PBRP standard for modern devices
+        default: 'android-12.1'
       DEVICE_TREE_URL:
         description: 'DEVICE_TREE_URL'
         required: true
-        default: 'https://github.com/councilcj/android-device-tree-motog2025kansas/tree/main'
+        default: 'https://github.com/councilcj/android-device-tree-motog2025kansas'
       USER_NAME:
         description: 'councilcj'
         required: true
@@ -38,6 +38,7 @@ jobs:
 
     - name: Prepare the environment
       run: |
+        sudo apt update
         sudo apt install git aria2 -y
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
@@ -51,7 +52,6 @@ jobs:
         git config --global user.name "${{ github.event.inputs.USER_NAME }}"
         git config --global user.email "${{ github.event.inputs.USER_EMAIL }}"
         repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
       id: pwd
 
     - name: Repo Sync
@@ -61,8 +61,7 @@ jobs:
 
     - name: Clone device tree
       run: |
-        # Hardcoded for Moto G 2025 (kansas)
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} -b main ./device/motorola/kansas
+        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} ./device/motorola/kansas
       working-directory: workspace
 
     - name: Set Swap Space
@@ -74,10 +73,20 @@ jobs:
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        # Hardcoded lunch for your specific makefile name
+        
+        # Lunch the device
         lunch omni_kansas-eng || lunch omni_boot-eng
-        make clean
-        make bootimage -j$(nproc --all)
+        
+        # --- THE NINJA FIX ---
+        # Manually staging files into the 'out' directory so Ninja doesn't panic
+        mkdir -p out/target/product/kansas/
+        cp device/motorola/kansas/dtb.img out/target/product/kansas/dtb.img
+        cp device/motorola/kansas/dtbo.img out/target/product/kansas/dtbo.img
+        cp device/motorola/kansas/kernel out/target/product/kansas/kernel
+        
+        # Build the bootimage
+        # We use 'm' instead of 'make bootimage' for better dependency handling in PBRP
+        m bootimage -j$(nproc --all)
       working-directory: workspace
 
     - name: Upload to Release
