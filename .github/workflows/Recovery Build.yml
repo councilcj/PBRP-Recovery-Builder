@@ -1,28 +1,7 @@
-name: Recovery Build - Moto G 2025
+name: Recovery Build - Moto G 2025 - Bruteforce
 
 on:
   workflow_dispatch:
-    inputs:
-      MANIFEST_URL:
-        description: 'MANIFEST_URL'
-        required: true
-        default: 'https://github.com/PitchBlackRecoveryProject/manifest_pb.git'
-      MANIFEST_BRANCH:
-        description: 'MANIFEST_BRANCH'
-        required: true
-        default: 'android-12.1'
-      DEVICE_TREE_URL:
-        description: 'DEVICE_TREE_URL'
-        required: true
-        default: 'https://github.com/councilcj/android-device-tree-motog2025kansas'
-      USER_NAME:
-        description: 'councilcj'
-        required: true
-        default: 'AI-Collaborator'
-      USER_EMAIL:
-        description: 'councilcj344@gmail.com'
-        required: true
-        default: 'tester@example.com'
 
 jobs:
   build:
@@ -36,67 +15,69 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
-    - name: Prepare the environment
+    - name: Prepare environment
       run: |
         sudo apt update
-        sudo apt install git aria2 python3 -y
+        sudo apt install git aria2 python3 python3-pip -y
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
-        sudo bash setup/install_android_sdk.sh
 
-    - name: Initialize repo
+    - name: Initialize & Sync
       run: |
         mkdir workspace
         cd workspace
-        git config --global user.name "${{ github.event.inputs.USER_NAME }}"
-        git config --global user.email "${{ github.event.inputs.USER_EMAIL }}"
-        repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
-      id: pwd
-
-    - name: Repo Sync
-      run: |
-        repo sync -c --no-clone-bundle --no-tags --optimized-fetch --prune --force-sync -j$(nproc --all)
-      working-directory: workspace
+        repo init --depth=1 -u https://github.com/PitchBlackRecoveryProject/manifest_pb.git -b android-12.1
+        repo sync -c -j$(nproc --all) --force-sync
+      working-directory: .
 
     - name: Clone device tree
       run: |
-        git clone ${{ github.event.inputs.DEVICE_TREE_URL }} ./device/motorola/kansas
+        git clone https://github.com/councilcj/android-device-tree-motog2025kansas ./device/motorola/kansas
       working-directory: workspace
 
-    - name: Set Swap Space
+    - name: Set Swap
       uses: pierotofy/set-swap-space@master
       with:
         swap-size-gb: 12
 
-    - name: Building recovery
+    - name: BRUTEFORCE ASSEMBLY
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        
-        # 1. Select the device
         lunch omni_kansas-eng || lunch omni_boot-eng
         
-        # 2. BRUTEFORCE STAGING
-        # Create the output folder and copy files before Ninja even wakes up
-        mkdir -p out/target/product/kansas/
-        cp device/motorola/kansas/dtb.img out/target/product/kansas/dtb.img
-        cp device/motorola/kansas/dtbo.img out/target/product/kansas/dtbo.img
-        cp device/motorola/kansas/kernel out/target/product/kansas/kernel
+        # 1. Build ONLY the ramdisk (The TWRP/PBRP core)
+        # This bypasses the DTB/Kernel check because it doesn't make a full image yet
+        m recoveryramdisk -j$(nproc --all)
         
-        # 3. Build with 'm' (it's smarter than 'make')
-        # If it fails due to Ninja regeneration, we copy again and retry automatically
-        m bootimage -j$(nproc --all) || (cp device/motorola/kansas/dtb.img out/target/product/kansas/dtb.img && m bootimage -j$(nproc --all))
+        # 2. FIND THE TOOLS
+        # Android hides its tools, so we find mkbootimg ourselves
+        MKBOOTIMG=$(find . -name mkbootimg.py | head -n 1)
         
+        # 3. SMASH IT TOGETHER
+        # We point directly to your files in the device tree. No rules, no safety.
+        python3 $MKBOOTIMG \
+          --kernel device/motorola/kansas/kernel \
+          --ramdisk out/target/product/kansas/ramdisk-recovery.img \
+          --dtb device/motorola/kansas/dtb.img \
+          --header_version 4 \
+          --os_version 14.0.0 \
+          --os_patch_level 2026-01 \
+          --pagesize 4096 \
+          --board "kansas" \
+          --cmdline "androidboot.boot_devices=soc/11270000.ufshci loop.max_part=7 mtk_disp_mgr.wait_vblank=0 video=720x1604@60" \
+          --output out/target/product/kansas/boot.img
+
+        # 4. Success Check
+        ls -lh out/target/product/kansas/boot.img
       working-directory: workspace
 
-    - name: Upload to Release
+    - name: Upload
       uses: softprops/action-gh-release@v1
       with:
-        files: |
-          workspace/out/target/product/kansas/boot.img
-        name: kansas-PBRP-Build
+        files: workspace/out/target/product/kansas/boot.img
+        name: kansas-Bruteforce-Build
         tag_name: ${{ github.run_id }}
-        body: "Custom Recovery Build for Moto G 2025 (kansas)"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
