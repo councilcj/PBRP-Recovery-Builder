@@ -39,7 +39,7 @@ jobs:
     - name: Prepare the environment
       run: |
         sudo apt update
-        sudo apt install git aria2 -y
+        sudo apt install git aria2 python3 -y
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
         sudo bash setup/android_build_env.sh
@@ -74,19 +74,20 @@ jobs:
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
         
-        # Lunch the device
+        # 1. Select the device
         lunch omni_kansas-eng || lunch omni_boot-eng
         
-        # --- THE NINJA FIX ---
-        # Manually staging files into the 'out' directory so Ninja doesn't panic
+        # 2. BRUTEFORCE STAGING
+        # Create the output folder and copy files before Ninja even wakes up
         mkdir -p out/target/product/kansas/
         cp device/motorola/kansas/dtb.img out/target/product/kansas/dtb.img
         cp device/motorola/kansas/dtbo.img out/target/product/kansas/dtbo.img
         cp device/motorola/kansas/kernel out/target/product/kansas/kernel
         
-        # Build the bootimage
-        # We use 'm' instead of 'make bootimage' for better dependency handling in PBRP
-        m bootimage -j$(nproc --all)
+        # 3. Build with 'm' (it's smarter than 'make')
+        # If it fails due to Ninja regeneration, we copy again and retry automatically
+        m bootimage -j$(nproc --all) || (cp device/motorola/kansas/dtb.img out/target/product/kansas/dtb.img && m bootimage -j$(nproc --all))
+        
       working-directory: workspace
 
     - name: Upload to Release
